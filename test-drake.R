@@ -1,5 +1,8 @@
 library(nimble)
-
+library(sf)
+library(tidyverse)
+library(units)
+library(coda)
 
 
 flexispom <- nimbleCode({
@@ -85,7 +88,24 @@ flexispom <- nimbleCode({
   } 
 })
 
-load("Data.RData")
+
+## Make up data
+nsite <- 98; nyear.obs <- nyear.sim <- 17
+# Distance matrix
+sp <- st_read("sampling_points.shp")
+dmat <- st_distance(sp)
+dmat %>% drop_units -> dmat
+set.seed(123)
+#Area
+Area = runif(nsite,50,3000)
+# frequencies of observation
+Y <- matrix(sample(c(0,0,0,1,2,3,4),nsite*nyear.obs,replace=T),
+            nrow=nsite, ncol=nyear.obs)
+K <- matrix(4,nrow=nsite, ncol=nyear.obs)
+z <- matrix(as.numeric(as.logical(Y)),
+       nrow=nsite, ncol=nyear.obs)
+
+# load("Data.RData")
 
 data <- list(Area=Area,
              Y=Y,
@@ -124,14 +144,32 @@ inits <- function(){
         G0_t=rnorm(nyear.sim-1,0,0.1),
         G1_t=rnorm(nyear.sim-1,0,0.1))
   }
+set.seed(123)
+inits_list <- inits()
 
-source("nimblecode.R")
 
-mp_DV <- nimbleMCMC(code=flexispom, constants=dyn.consts, data=data, inits=inits,
-                    monitors = params, nchains=3, niter = 80000, nburnin = 30000, # 80k run 30k burnin
-                    thin = 1, summary = TRUE, WAIC =FALSE, check= TRUE, samples = TRUE, samplesAsCodaMCMC=TRUE)
+mDV <- nimbleModel(code=flexispom,
+                   constants=dyn.consts,
+                   data=data,
+                   inits=inits_list,
+                   name="DV")
+
+MCMCconf <- configureMCMC(mDV, monitors = params, enableWAIC = T)
+mDVmcmc <- buildMCMC(MCMCconf,niter = 80000, nburnin = 30000,summary = TRUE, WAIC =FALSE, check= TRUE, samples = TRUE, samplesAsCodaMCMC=TRUE)
+cmDV <- compileNimble(mDV)
+cmDVmcmc <- compileNimble(mDVmcmc , project = mDV)
+
+samples <- runMCMC(cmDVmcmc, niter = 80000, nburnin = 30000,summary = TRUE, WAIC =FALSE, samples = TRUE, samplesAsCodaMCMC=TRUE)
+save(samples, file="samples_DV.RData")
+colnames(samples$samples)
+barplot(apply(samples$samples,2,sd),las=2)
+plot(samples$samples[, "Alpha[2]"], type = "l")
+plot(samples$samples[, "b1_t[1]"], type = "l")
+plot(samples$samples[, "m.occ[1]"], type = "l") # non cambia: errore o dovuto ai dati troppo informativi?
+
+
+#######
 save(mp_DV, file=paste("mp_DV",format(Sys.time(), "%Y%m%d"), ".RData", sep=""))
-
 mp_UV <- nimbleMCMC(code=flexispomv, constants=dyn.consts.struct, data=data, inits=inits,
                     monitors = params, nchains=3, niter = 80000, nburnin = 30000,
                     thin = 1, summary = TRUE, WAIC = FALSE, check= TRUE, samples = TRUE, samplesAsCodaMCMC=TRUE)
